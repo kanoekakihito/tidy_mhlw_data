@@ -38,44 +38,39 @@ import re
 from tkinter.filedialog import askopenfilename, asksaveasfilename
 
 
-input_filepath = askopenfilename()
+input_filepath = "000778300.csv"
 with open(input_filepath, encoding="utf-8-sig") as input_file:
     input_content = [d for d in csv.DictReader(input_file)]
 """
 調べた結果、
-１）発生日、症状名(PT名)、転帰日、転帰内容の列は各C個の値が格納されている。これはすべての列で同行内なら値数Cが合致した。
+１）発生日、症状名(PT名)、転帰日、転帰内容の列は各C個の値が格納されている。
+　　これは一部行をのぞき同行内なら値数Cが合致した。列数Cが合わない場合は上から値を割り振り、欠けが発生する欄は空欄とした。
+　　（多分RDBから出力したそのままのデータではないんだろう。）
 ２）２行だけNo（おそらく主キー）の列にNo（\n）※印の行を見つける。
   ※印の内容は備考で、
   「※１ No.4611とNo.4842は、同一事例について、接種医療機関（No.4611）及び搬送先医療機関（No.4842）それぞれから副反応疑い報告がなされたもの。
   資料1-1-1及び1-3における「死亡として報告された事例」においては1件として集計。
   また、資料1-1-1の集計においては、直接死亡を確認した搬送先医療機関からの報告内容に基づき分類している。」
-  ・・・とのこと。勝手に触っていいのか分からないので手つかずにする。
+  ・・・とのこと。
+  同一の人・事例に通し番号は基本一つにしたいが、勝手に触っていいのか分からないので手つかずにする。
+  特記事項欄に注意書きを付す。
+
 ３）単位「歳」はどう考えても平均取ったり等には邪魔。外す。
+
 ４）PT名とかSOCとかいうのは語彙が統一されているようだ（MedDRA）。上位カテゴリSOCと下位カテゴリPTとかいう風に見える。
     参考：https://www.meddra.org/how-to-use/support-documentation/japanese
     参考：https://admin.new.meddra.org/sites/default/files/guidance/file/intguide_24_0_Japanese.pdf
     上位概念SOCに対して、PTは複数のSOCに属するようなツリー型構造をしているようだ。
 
-不明点）
-１）PT名と症状名は列を分割すべきか？
-２）列「症状名(PT名)」の値「そう痒症（そう痒症|そう痒症）」と値「そう痒症（そう痒症|そう痒症|そう痒症）」の違い。
-    |は単なる区切り文字？順序に意味はあるか？繰り返し回数で強調などの意味はあるか？
-　　列「症状名(PT名)」の値「悪心・嘔吐（悪心|嘔吐）」と値「悪心・嘔吐（嘔吐|悪心）」の違い。
-３）列「症状名(PT名)」の値「皮疹・発疹・紅斑（発疹|紅斑）」は分解？そのまま？
-　　分解するとしたら「皮疹（発疹）」「発疹（発疹）」「紅斑（発疹）」「皮疹（紅斑）」「発疹（紅斑）」「紅斑（紅斑）」でいいのか？
-
-    →資料を見る限り複数の症状が１カテゴリに集約されていたりするようだ。
-  例）皮疹・発疹・紅斑はもともと３つくらいのカテゴリだったのが１つにまとまっているらしい。
-  とはいえ、症状名の語彙や
-　　「そもそもこの症状名は誰がどう語彙を決めているんだろう」等のよく分からない点はあるが・・・。
-  参照元: https://www.mhlw.go.jp/content/10906000/000778299.pdf p.8-
-
-  →例えばレベルの話で、「皮疹・発疹・紅斑（発疹|紅斑）」は「皮疹」「発疹（発疹）」「紅斑（紅斑）」というのが考えうる。
-  あるいは「発疹（発疹）」「紅斑（紅斑）」のみ残して「皮疹」は消しちゃうとか。
-  https://www.mhlw.go.jp/content/10906000/000778302.pdf
-
-
-
+    https://www.mhlw.go.jp/content/10906000/000778299.pdf p.8-
+    ・・・を参照して症状名の対応表を作成。
+    一覧の症状名はたまに置き換えミスがあるので「症状名（原文ママ）」として残しつつPTから逆引きした「症状名」を付す。
+    
+５）同日の症状別集計
+    https://www.mhlw.go.jp/content/10906000/000778299.pdf p.8-
+    のデータと整合しそうなのでPT名欄の値重複（例：悪心|悪心、とあれば２行になる）は排除していない。
+    必要であれば使う人が重複排除してほしい。
+       
 """
 
 # print(frozenset([i for i in map(lambda d: d["No"], input_content) if "\n" in i]))
@@ -151,17 +146,42 @@ for d in tmp_content:
     split_content.append(new_dict)
 
 
-output_content = []
+# 参照元: https://www.mhlw.go.jp/content/10906000/000778299.pdf p.8-
+meddra_filepath = "meddra.csv"
+with open(meddra_filepath, encoding="utf-8") as f:
+    symptom_dict = [d for d in csv.DictReader(f)]
+    # symptom_term = frozenset(map(lambda d: d["症状名"], symptom_dict))
+    pt_term = {d["PT名"]:d for d in symptom_dict}
+
+    
+tidy_content = []
 for d in split_content:
     patient_dict = {key: d[key] for key in patient_attribute}
     side_effect_values = tuple(map(lambda key: d[key], side_effect_attribute))
     for row in zip_longest(*side_effect_values, fillvalue=""):
         side_efect_dict = dict(zip(side_effect_attribute, map(lambda v: v.replace("\n", ""), row)))
-        output_dict = dict()
-        output_dict.update(patient_dict)
-        output_dict.update(side_efect_dict)
-        output_content.append(output_dict)
+        new_dict = dict()
+        new_dict.update(patient_dict)
+        new_dict.update(side_efect_dict)
+        tidy_content.append(new_dict)
 
+output_content = []
+for d in tidy_content:
+    tmp_symptom = "".join(re.split("(?<=[^（])(?=（)", d["症状名（PT名）"])[:-1])
+    pt_name = re.split("(?<=[^（])(?=（)", d["症状名（PT名）"])[-1]
+    for pt in re.sub("[（）]", "", pt_name).split("|"):
+        assert pt in pt_term
+        if pt_term[pt]["症状名"] != tmp_symptom:
+            print(pt_term[pt]["症状名"], tmp_symptom)
+        new_dict = dict()
+        new_dict.update(d)
+        new_dict.update({
+            "SOC名": pt_term[pt]["SOC名"],
+            "症状名（原文ママ）": tmp_symptom,
+            "症状名": pt_term[pt]["症状名"],
+            "PT名": pt
+            })
+        output_content.append(new_dict)
 
 output_filepath = asksaveasfilename()
 with open(output_filepath, mode="w", encoding="utf-8-sig") as output_file:
